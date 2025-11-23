@@ -237,38 +237,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-        await update.message.reply_text(f"❌ الكود '{token}' غير صحيح أو لا يوجد ملف مرتبط به.")
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.warning('Update "%s" caused error "%s"', update, context.error)
-    if update and update.message:
-        await update.message.reply_text('عذراً، حدث خطأ ما. يرجى المحاولة مرة أخرى.')
-
-# =======================================================
-## ⚙️ الدالة الرئيسية لتشغيل البوت
-# =======================================================
-
-def main() -> None:
-    """بناء وتشغيل البوت."""
-    initialize_db() 
-    logger.info("جاري إعداد البوت...")
-
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    # استخدام الفلاتر الفردية المتوافقة
-    application.add_handler(MessageHandler(
-        filters.PHOTO | filters.VIDEO | filters.Document.ALL, 
-        save_file
-    ))
     
-    application.add_handler(CommandHandler("get_file", get_file))
-    application.add_handler(CommandHandler("start", start))
-
-    application.add_error_handler(error_handler)
-
-    logger.info("البوت جاهز للعمل. بدء الاستماع للرسائل (Polling)...")
-    
-    application.run_polling(poll_interval=1.0) 
-
-if __name__ == '__main__':
-    main()
