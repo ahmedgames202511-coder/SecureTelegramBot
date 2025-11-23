@@ -1,5 +1,5 @@
 # =======================================================
-# كود بوت تليجرام لتخزين مجموعة الملفات بكود واحد
+# كود بوت تليجرام لتخزين مجموعة الملفات بكود واحد (إصدار مستقر)
 # =======================================================
 
 import logging
@@ -15,7 +15,7 @@ import os
 # -------------------------------------------------------
 
 BOT_TOKEN = "8569298426:AAH_FYVCMTIFs78NI1fe53sTElYgLzb9buI"
-DB_FILE = "secure_groups_storage.db" # تم تغيير اسم الملف لتفادي تعارض الجداول القديمة
+DB_FILE = "secure_groups_storage.db" # اسم ملف قاعدة البيانات
 
 # إعدادات التسجيل
 logging.basicConfig(
@@ -40,8 +40,8 @@ def initialize_db():
         cursor = conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, -- المفتاح الأساسي للتسجيل
-                token TEXT NOT NULL,                -- الكود السري (يمكن أن يتكرر)
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                token TEXT NOT NULL,                
                 file_id TEXT NOT NULL,
                 file_type TEXT
             )
@@ -57,7 +57,6 @@ def save_file_info(token, file_id, file_type):
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        # INSERT INTO الآن لا تحتاج إلى فرادة في التوكن
         cursor.execute("INSERT INTO files (token, file_id, file_type) VALUES (?, ?, ?)", 
                        (token, file_id, file_type))
         conn.commit()
@@ -72,11 +71,10 @@ def get_file_info(token):
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        # SELECT الآن تعيد قائمة بالملفات لنفس التوكن
         cursor.execute("SELECT file_id, file_type FROM files WHERE token = ?", (token,))
         result = cursor.fetchall()
         conn.close()
-        return result if result else None # تعيد قائمة من (file_id, file_type)
+        return result if result else None 
     except Exception:
         return None
 
@@ -100,15 +98,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_name = update.message.from_user.first_name if update.message.from_user.first_name else 'عزيزي المستخدم'
     await update.message.reply_text(
         f'مرحباً بك يا {user_name} في بوت تخزين المجموعات الآمنة 🔒.\n\n'
-        '**طريقة حفظ المجموعات (صور/فيديو/ملفات):**\n'
-        '1. **لإنشاء مجموعة جديدة:** فقط أرسل الملف الأول. سأعطيك كوداً سرياً.\n'
-        '2. **لإضافة ملفات لنفس الكود:** أرسل الملف التالي واكتب في التعليق: `/add [الكود السري]`.\n\n'
+        '**طريقة حفظ المجموعات:**\n'
+        '1. **لبدء مجموعة جديدة:** أرسل الملف الأول. سأعطيك كوداً سرياً جديداً.\n'
+        '2. **لإضافة ملفات لنفس الكود:** أرسل الملف التالي واكتب الكود السري فقط في التعليق (Caption).\n\n'
         '**طريقة استرجاع المجموعة:**\n'
         'استخدم الأمر: **/get_group [الكود السري]**'
     )
 
 async def save_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """تحفظ الملفات سواء بإنشاء كود جديد أو الإضافة لكود موجود."""
+    
     file_id = None
     file_type = "غير محدد"
     
@@ -123,29 +122,27 @@ async def save_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         file_id = update.message.document.file_id
         file_type = "مستند"
     else:
-        return # ليس ملفاً، تجاهل
+        return 
     
-    # 2. التحقق من التعليق: هل يريد المستخدم الإضافة لكود موجود؟
+    # 2. التحقق من التعليق: هل يوجد كود سري (Token) مكتوب في التعليق؟
     token_to_use = None
     caption = update.message.caption if update.message.caption else ''
     
-    if caption.strip().upper().startswith('/ADD'):
-        try:
-            # استخراج الكود من التعليق: /add A1B2C3
-            parts = caption.strip().split()
-            potential_token = parts[1].strip().upper()
-            if check_token_exists(potential_token):
-                token_to_use = potential_token
-        except IndexError:
-            # إذا كتب المستخدم /add فقط دون كود
-            await update.message.reply_text("❌ لاستخدام `/add`، يجب إرسال الكود بعده. مثال: `/add A1B2C3`")
-            return
-    
+    # محاولة استخراج أول كلمة في التعليق كرمز
+    if caption:
+        potential_token = caption.strip().split()[0].upper()
+        # التحقق من وجود الكود في قاعدة البيانات
+        if check_token_exists(potential_token):
+            token_to_use = potential_token
+
     # 3. إذا لم يتم تحديد كود صحيح، ننشئ كوداً جديداً
     is_new_group = False
     if not token_to_use:
         is_new_group = True
+        # نضمن أن الكود الجديد غير موجود مسبقًا
         token_to_use = generate_token()
+        while check_token_exists(token_to_use):
+            token_to_use = generate_token()
     
     # 4. الحفظ
     if save_file_info(token_to_use, file_id, file_type):
@@ -153,7 +150,7 @@ async def save_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             response_text = (
                 f"✅ **تم إنشاء وحفظ مجموعة جديدة بنجاح!** (تم حفظ {file_type})\n\n"
                 f"**كود المجموعة (Token):** `{token_to_use}`\n\n"
-                f"**لإضافة ملفات أخرى، أرسل الملف واكتب في التعليق: `/add {token_to_use}`**"
+                f"**لإضافة ملفات أخرى، أرسل الملف واكتب **الكود السري فقط** في التعليق: **`{token_to_use}`**"
             )
         else:
             response_text = (
@@ -174,7 +171,7 @@ async def get_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     token = context.args[0].strip().upper() 
-    file_info_list = get_file_info(token) # قائمة بـ (file_id, file_type)
+    file_info_list = get_file_info(token) 
     
     if file_info_list:
         try:
