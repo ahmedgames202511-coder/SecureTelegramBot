@@ -1,5 +1,5 @@
 # =======================================================
-# كود بوت تليجرام لتخزين مجموعة الملفات بكود واحد (إصدار مستقر)
+# كود بوت تليجرام للتخزين الآمن بمجموعات محمية (الإصدار 6.0 - التوكن الجديد)
 # =======================================================
 
 import logging
@@ -8,14 +8,15 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 import sqlite3
 import random
 import string
-import os
+import secrets 
 
 # -------------------------------------------------------
 ## 🎬 الإعدادات الأساسية
 # -------------------------------------------------------
 
-BOT_TOKEN = "8569298426:AAH_FYVCMTIFs78NI1fe53sTElYgLzb9buI"
-DB_FILE = "secure_groups_storage.db" # اسم ملف قاعدة البيانات
+# ⚠️ تم تحديث التوكن الجديد
+BOT_TOKEN = "8599372599:AAEIl4uTdsqdxiybRGxIVcuhJio8uex76SQ"
+DB_FILE = "secure_user_storage.db" 
 
 # إعدادات التسجيل
 logging.basicConfig(
@@ -25,19 +26,48 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =======================================================
-## 🔑 دوال توليد الكود وقاعدة البيانات
+## 🔑 دوال توليد الكود والبيانات السرية
 # =======================================================
 
 def generate_token(length=6):
-    """توليد كود أبجدي رقمي عشوائي فريد."""
+    """توليد كود أبجدي رقمي عشوائي للمجموعة."""
     characters = string.ascii_uppercase + string.digits
-    return ''.join(random.choice(characters) for i in range(length))
+    return ''.join(secrets.choice(characters) for i in range(length))
+
+def generate_username(length=8):
+    """توليد اسم مستخدم عشوائي."""
+    return 'USER_' + ''.join(secrets.choice(string.ascii_lowercase + string.digits) for i in range(length))
+
+def generate_password(length=10):
+    """توليد كلمة مرور قوية."""
+    chars = string.ascii_letters + string.digits + "!@#$"
+    return ''.join(secrets.choice(chars) for i in range(length))
+
+def generate_pin():
+    """توليد رقم سري PIN مكون من 4 أرقام."""
+    return ''.join(secrets.choice(string.digits) for i in range(4))
+
+# =======================================================
+## 💾 دوال قاعدة البيانات
+# =======================================================
 
 def initialize_db():
-    """تهيئة قاعدة البيانات للسماح بتخزين ملفات متعددة بنفس الكود."""
+    """تهيئة قاعدة البيانات وإنشاء جدولين: للملفات وجدول لبيانات الاعتماد."""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
+        
+        # جدول لبيانات الاعتماد (المفتاح هو توكن المجموعة)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS credentials (
+                token TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                pin TEXT NOT NULL
+            )
+        ''')
+        
+        # جدول لتخزين معرفات الملفات المرتبطة بالتوكن
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -48,9 +78,37 @@ def initialize_db():
         ''')
         conn.commit()
         conn.close()
-        logger.info(f"قاعدة البيانات {DB_FILE} جاهزة لتخزين مجموعات الملفات.")
+        logger.info(f"قاعدة البيانات {DB_FILE} جاهزة بجداول credentials و files.")
     except Exception as e:
         logger.error(f"خطأ في تهيئة قاعدة البيانات: {e}")
+
+def create_credentials(token, username, password, pin):
+    """إنشاء بيانات اعتماد فريدة لتوكن المجموعة."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO credentials (token, username, password, pin) VALUES (?, ?, ?, ?)", 
+                       (token, username, password, pin))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    except Exception as e:
+        logger.error(f"خطأ في حفظ بيانات الاعتماد: {e}")
+        return False
+
+def get_credentials(token):
+    """استرجاع بيانات الاعتماد (Username, Password, Pin) لتوكن المجموعة."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, password, pin FROM credentials WHERE token = ?", (token,))
+        result = cursor.fetchone()
+        conn.close()
+        return result 
+    except Exception:
+        return None
 
 def save_file_info(token, file_id, file_type):
     """حفظ معرف الملف ونوعه باستخدام الكود (token)."""
@@ -79,17 +137,29 @@ def get_file_info(token):
         return None
 
 def check_token_exists(token):
-    """التحقق من وجود كود في قاعدة البيانات."""
+    """التحقق من وجود كود في قاعدة البيانات (جدول credentials)."""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM files WHERE token = ? LIMIT 1", (token,))
+        cursor.execute("SELECT 1 FROM credentials WHERE token = ? LIMIT 1", (token,))
         exists = cursor.fetchone() is not None
         conn.close()
         return exists
     except Exception:
         return False
 
+def is_username_unique(username):
+    """التحقق من فرادة اسم المستخدم."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM credentials WHERE username = ? LIMIT 1", (username,))
+        exists = cursor.fetchone() is not None
+        conn.close()
+        return not exists
+    except Exception:
+        return False
+    
 # =======================================================
 ## 🚀 دوال معالجة التليجرام
 # =======================================================
@@ -97,16 +167,20 @@ def check_token_exists(token):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_name = update.message.from_user.first_name if update.message.from_user.first_name else 'عزيزي المستخدم'
     await update.message.reply_text(
-        f'مرحباً بك يا {user_name} في بوت تخزين المجموعات الآمنة 🔒.\n\n'
-        '**طريقة حفظ المجموعات:**\n'
-        '1. **لبدء مجموعة جديدة:** أرسل الملف الأول. سأعطيك كوداً سرياً جديداً.\n'
-        '2. **لإضافة ملفات لنفس الكود:** أرسل الملف التالي واكتب الكود السري فقط في التعليق (Caption).\n\n'
-        '**طريقة استرجاع المجموعة:**\n'
-        'استخدم الأمر: **/get_group [الكود السري]**'
+        f'مرحباً بك يا {user_name} في بوت التخزين الآمن والمحمي 🔒.\n\n'
+        '**وصف البوت:**\n'
+        'هذا البوت صُمم لتخزين ملفاتك (صور، فيديوهات، مستندات) بشكل آمن، بحيث إذا قمت بمسحها من هاتفك أو التليجرام، تظل محفوظة هنا. كل مجموعة ملفات يتم تأمينها بشكل منفصل.\n\n'
+        '**نظام الحفظ والتأمين الجديد:**\n'
+        '1. **لبدء مجموعة جديدة:** أرسل الملف الأول. سأولد لك كود مجموعة سري و**اسم مستخدم** و **كلمة مرور** و **PIN** (للاسترداد).\n'
+        '2. **لإضافة ملفات لنفس المجموعة:** أرسل الملف التالي واكتب **كود المجموعة فقط** في التعليق.\n\n'
+        '**نظام الاسترجاع الآمن:**\n'
+        'لطلب ملفاتك، استخدم الأمر:\n'
+        '• **/retrieve [توكن] [اسم المستخدم] [كلمة المرور]**\n'
+        '• **/retrieve [توكن] [PIN]** (إذا نسيت الاسم وكلمة المرور)'
     )
 
 async def save_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """تحفظ الملفات سواء بإنشاء كود جديد أو الإضافة لكود موجود."""
+    """تحفظ الملفات سواء بإنشاء كود جديد (مع بيانات اعتماد) أو الإضافة لكود موجود."""
     
     file_id = None
     file_type = "غير محدد"
@@ -124,59 +198,110 @@ async def save_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         return 
     
-    # 2. التحقق من التعليق: هل يوجد كود سري (Token) مكتوب في التعليق؟
+    # 2. تحديد التوكن (من التعليق أو توكن جديد)
     token_to_use = None
     caption = update.message.caption if update.message.caption else ''
+    is_new_group = False
     
-    # محاولة استخراج أول كلمة في التعليق كرمز
     if caption:
         potential_token = caption.strip().split()[0].upper()
-        # التحقق من وجود الكود في قاعدة البيانات
+        # إذا كان الكود موجوداً في جدول credentials، نستخدمه
         if check_token_exists(potential_token):
             token_to_use = potential_token
 
-    # 3. إذا لم يتم تحديد كود صحيح، ننشئ كوداً جديداً
-    is_new_group = False
+    # 3. إذا لم يتم تحديد كود صحيح، ننشئ مجموعة جديدة
     if not token_to_use:
         is_new_group = True
-        # نضمن أن الكود الجديد غير موجود مسبقًا
+        
+        # 3.1. توليد كود مجموعة فريد
         token_to_use = generate_token()
         while check_token_exists(token_to_use):
             token_to_use = generate_token()
-    
-    # 4. الحفظ
+            
+        # 3.2. توليد بيانات اعتماد فريدة
+        username_new = generate_username()
+        while not is_username_unique(username_new):
+            username_new = generate_username()
+            
+        password_new = generate_password()
+        pin_new = generate_pin()
+        
+        # 3.3. حفظ بيانات الاعتماد الجديدة أولاً
+        if not create_credentials(token_to_use, username_new, password_new, pin_new):
+             await update.message.reply_text(f"❌ فشل إنشاء بيانات الاعتماد للمجموعة الجديدة. يرجى المحاولة لاحقاً.")
+             return
+
+    # 4. حفظ الملف
     if save_file_info(token_to_use, file_id, file_type):
         if is_new_group:
             response_text = (
-                f"✅ **تم إنشاء وحفظ مجموعة جديدة بنجاح!** (تم حفظ {file_type})\n\n"
-                f"**كود المجموعة (Token):** `{token_to_use}`\n\n"
-                f"**لإضافة ملفات أخرى، أرسل الملف واكتب **الكود السري فقط** في التعليق: **`{token_to_use}`**"
+                f"✅ **تم إنشاء مجموعة آمنة وحفظ {file_type} بنجاح!**\n\n"
+                f"**🔑 بيانات الدخول الخاصة بمجموعتك (احفظها جيداً):**\n"
+                f"• **توكن المجموعة:** `{token_to_use}`\n"
+                f"• **اسم المستخدم:** `{username_new}`\n"
+                f"• **كلمة المرور:** `{password_new}`\n"
+                f"• **الرقم السري (PIN):** `{pin_new}`\n\n"
+                f"**لإضافة ملف آخر، أرسل الملف واكتب **التوكن فقط** في التعليق: **`{token_to_use}`**"
             )
         else:
             response_text = (
                 f"✅ **تمت الإضافة بنجاح!** (تم حفظ {file_type})\n"
-                f"تم إضافة الملف إلى المجموعة ذات الكود: `{token_to_use}`."
+                f"تم إضافة الملف إلى المجموعة المؤمنة بالتوكن: `{token_to_use}`."
             )
         await update.message.reply_text(response_text, parse_mode='Markdown')
     else:
         await update.message.reply_text(f"❌ حدث خطأ أثناء محاولة حفظ الملف.")
 
 
-# دالة استرجاع المجموعة
-async def get_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """تسترجع جميع الملفات المرتبطة بكود معين."""
+# دالة استرجاع المجموعة مع التحقق من بيانات الاعتماد
+async def retrieve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """تسترجع جميع الملفات المرتبطة بكود معين بعد التحقق من بيانات الاعتماد أو الـ PIN."""
 
-    if not context.args:
-        await update.message.reply_text("الرجاء إدخال كود المجموعة. مثال: /get_group A1B2C3")
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ استخدام خاطئ.\n"
+            "الاستخدام الصحيح:\n"
+            "• `/retrieve [توكن] [اسم المستخدم] [كلمة المرور]`\n"
+            "• `/retrieve [توكن] [PIN]`"
+        )
         return
 
+    # استخلاص البيانات المدخلة
     token = context.args[0].strip().upper() 
+    auth_1 = context.args[1]
+    auth_2 = context.args[2] if len(context.args) == 3 else None
+    
+    stored_credentials = get_credentials(token)
+    
+    if not stored_credentials:
+        await update.message.reply_text(f"❌ التوكن '{token}' غير صحيح أو لا يوجد ملفات مرتبطة به.")
+        return
+        
+    stored_username, stored_password, stored_pin = stored_credentials
+    is_authenticated = False
+    
+    # 1. محاولة المصادقة باسم المستخدم وكلمة المرور
+    if auth_2:
+        if auth_1 == stored_username and auth_2 == stored_password:
+            is_authenticated = True
+    
+    # 2. محاولة المصادقة بالـ PIN (إذا كان هناك مدخلان فقط)
+    elif len(context.args) == 2:
+        # إذا كان المدخل الثاني هو PIN المخزن
+        if auth_1 == stored_pin:
+            is_authenticated = True
+
+    if not is_authenticated:
+        await update.message.reply_text("❌ فشلت المصادقة. اسم المستخدم وكلمة المرور أو الـ PIN غير صحيحين للتوكن المقدم.")
+        return
+
+    # إذا كانت المصادقة ناجحة، نبدأ إرسال الملفات
     file_info_list = get_file_info(token) 
     
     if file_info_list:
         try:
             await update.message.reply_text(
-                f"✅ جارٍ إرسال {len(file_info_list)} ملفات للمجموعة '{token}'..."
+                f"✅ المصادقة ناجحة. جارٍ إرسال {len(file_info_list)} ملفات للمجموعة '{token}'..."
             )
             
             # إرسال كل ملف في القائمة بالترتيب
@@ -196,13 +321,14 @@ async def get_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error(f"خطأ في إرسال الملفات: {e}")
             await update.message.reply_text(f"❌ حدث خطأ أثناء إرسال الملفات: {e}")
     else:
-        await update.message.reply_text(f"❌ الكود '{token}' غير صحيح أو لا توجد ملفات مرتبطة به.")
+        await update.message.reply_text(f"❌ لا توجد ملفات حاليًا مرتبطة بالتوكن '{token}'.")
+
 
 # دالة معالجة الأخطاء
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.warning('Update "%s" caused error "%s"', update, context.error)
     if update and update.message:
-        await update.message.reply_text('عذراً، حدث خطأ ما.')
+        await update.message.reply_text('عذراً، حدث خطأ ما. يرجى مراجعة سجلات الخادم للمزيد من التفاصيل.')
 
 # =======================================================
 ## ⚙️ الدالة الرئيسية لتشغيل البوت
@@ -222,7 +348,7 @@ def main() -> None:
     ))
     
     # معالج أمر الاسترجاع
-    application.add_handler(CommandHandler("get_group", get_group))
+    application.add_handler(CommandHandler("retrieve", retrieve))
     
     application.add_handler(CommandHandler("start", start))
 
@@ -234,4 +360,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-    
+        
